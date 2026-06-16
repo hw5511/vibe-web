@@ -150,3 +150,150 @@ tree src/ -I node_modules
 1. **권한 오류**: 관리자 권한으로 터미널 실행
 2. **경로 오류**: 백슬래시(\) 사용 확인 (Windows)
 3. **명령어 오류**: OS에 맞는 명령어 사용 확인
+
+---
+
+## 7. GitHub 백업 및 배포 (gh CLI 전용)
+
+새 프로젝트 생성 직후, 사용자가 자연어로 백업/배포를 요청하면 다음 흐름을 따른다.
+**전제: setup 단계에서 gh CLI 설치 + OAuth 인증 + `.claude/skills/gh_cli/skill.md` 스킬 등록이 이미 완료되어 있다.**
+
+### 7-1. GitHub 백업 ("백업해줘" 요청 시)
+
+```bash
+# 1) 새 저장소 생성 (gh CLI)
+gh repo create {프로젝트명} --public --description "{설명}"
+
+# 2) 로컬 git 초기화 + 첫 푸시
+git init
+git add .
+git commit -m "initial setup"
+git branch -M main
+git remote add origin https://github.com/{사용자명}/{프로젝트명}.git
+git push -u origin main
+```
+
+**이후 변경사항 백업**:
+```bash
+git add .
+git commit -m "{메시지}"
+git push
+```
+
+### 7-2. GitHub Pages 자동 배포 ("배포해줘" 요청 시)
+
+**GitHub Actions 워크플로우 방식만 사용** (Legacy 빌드 방식 금지 — "building" 상태 멈춤 / 에러 빈발).
+
+```bash
+# 1) .github/workflows/deploy.yml 생성 (아래 템플릿)
+# 2) 커밋 + 푸시
+# 3) Pages 설정을 workflow 방식으로 변경
+gh api repos/{사용자명}/{프로젝트명}/pages -X PUT -f build_type=workflow
+```
+
+**워크플로우 파일** (`.github/workflows/deploy.yml`):
+```yaml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+**배포 확인**:
+- GitHub 저장소 → Actions 탭에서 워크플로우 실행 확인
+- 초록색 체크 표시되면 배포 완료
+- `https://{사용자명}.github.io/{프로젝트명}` 접속 안내
+
+### 7-3. 금지 사항
+
+- netlify, vercel, surge 등 **외부 정적 호스팅 서비스 사용 금지**
+- Personal Access Token 직접 발급 금지 (`gh auth login` OAuth 방식만)
+- GitHub Pages **Legacy 빌드 방식 금지** (Actions 워크플로우만)
+
+---
+
+## 8. 데이터베이스 — Supabase MCP (Claude 플러그인 + OAuth)
+
+DB / 백엔드가 필요한 프로젝트는 **Supabase** 를 사용한다.
+**전제: lesson2 단계에서 Supabase 계정 생성 + Supabase MCP Claude 플러그인 등록 + OAuth 인증이 이미 완료되어 있다.**
+
+### 8-1. Supabase MCP 설치 방식 (Claude 플러그인 + OAuth)
+
+```bash
+# 등록 (Claude 종료 상태에서 터미널 실행)
+claude mcp add --transport http supabase https://mcp.supabase.com/mcp
+```
+
+**인증** (Claude 안에서):
+1. `/mcp` 입력 → MCP 서버 목록 표시
+2. `supabase` 선택 → `auth` 선택
+3. 브라우저 자동 열림 → Supabase 로그인 (GitHub 계정) → **Authorize** 클릭
+4. `/mcp` 에서 `supabase ✔ connected` 확인
+
+토큰이나 프로젝트 ID 를 직접 입력하지 않는다. OAuth 가 자동 처리한다.
+
+### 8-2. DB 작업 표준 도구
+
+DB 작업은 반드시 `mcp__supabase__*` 도구를 통해서만 수행한다:
+
+| 도구 | 용도 |
+|---|---|
+| `mcp__supabase__list_projects` | 사용 가능한 Supabase 프로젝트 목록 |
+| `mcp__supabase__get_project_url` | 프로젝트 URL 확인 |
+| `mcp__supabase__list_tables` | 테이블 목록 조회 |
+| `mcp__supabase__execute_sql` | 테이블 생성·조회·수정·삭제 |
+
+### 8-3. 환경변수 / 클라이언트 연결
+
+프론트엔드(React)에서 Supabase 사용:
+```bash
+npm install @supabase/supabase-js
+```
+
+`.env` 에 다음 키 저장 (절대 코드에 하드코드 금지, `.gitignore` 에 `.env` 포함 필수):
+```
+VITE_SUPABASE_URL=https://{프로젝트}.supabase.co
+VITE_SUPABASE_ANON_KEY={anon-public-key}
+```
+
+`src/lib/supabase.js`:
+```javascript
+import { createClient } from '@supabase/supabase-js'
+
+export const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+)
+```
+
+### 8-4. 금지 사항
+
+- firebase, mongodb, mysql, postgres(직접) 등 **다른 DB / 백엔드 서비스 사용 금지**
+- Supabase URL / API 키를 **코드 / 문서 / 깃에 직접 노출 금지** (`.env` + `.gitignore`)
+- Supabase service_role key 사용 금지 (anon 키만 사용 — RLS 정책으로 보안)
